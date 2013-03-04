@@ -1,107 +1,130 @@
---[[
-
-	PointShop MySQL Adapter by _Undefined
-	
-	Usage:
-	
-		First, make sure you have the MySQLOO module installed from:
-			http://www.facepunch.com/showthread.php?t=1220537
-			Installation instructions are in that thread.
-	
-		Then configure your MySQL details below and import the tables into your
-			database using the provided sql file. If you do not have a database
-			already set up, do that before importing the file.
-		
-		MAKE SURE YOU ALLOW REMOTE ACCESS TO YOUR DATABASE FROM YOUR GMOD SERVERS IP ADDRESS.
-		
-		If you're upgrading from the old version, run the following SQL before starting your server and then remove the old tables (pointshop_points and pointshop_items):
-		
-			INSERT INTO `pointshop_data` SELECT `pointshop_points`.`uniqueid`, `points`, `items` FROM `pointshop_points` INNER JOIN `pointshop_items` ON `pointshop_items`.`uniqueid` = `pointshop_points`.`uniqueid`
-		
-		Once configured, change PS.Config.DataProvider = 'pdata' to PS.Config.DataProvider = 'mysql' in pointshop's sh_config.lua.
-	
-]]--
-
--- config, change these to match your setup
-
-local mysql_hostname = 'localhost' -- Your MySQL server address.
-local mysql_username = 'root' -- Your MySQL username.
-local mysql_password = '' -- Your MySQL password.
-local mysql_database = 'pointshop' -- Your MySQL database.
-local mysql_port = 3306 -- Your MySQL port. Most likely is 3306.
-
--- end config, don't change anything below unless you know what you're doing
+--[[ UPGRADE
+INSERT INTO
+    `pointshop_data` (`uniqueid`,`points`,`items`)
+SELECT
+	DISTINCT `t1`.`uniqueid`,`t1`.`points`,IF(`t2`.`items` IS NULL,'[]',`t2`.`items`)
+FROM
+	`pointshop_points` as `t1`
+LEFT JOIN
+	`pointshop_items` as `t2` on `t1`.uniqueid = `t2`.uniqueid;
+UPDATE `pointshop_data` SET `items` = '{}' WHERE `items` = '[]';
+]]
 
 require('mysqloo')
-
 local shouldmysql = false
+local loaded = false
+local db_obj = nil
 
-local db = mysqloo.connect(mysql_hostname, mysql_username, mysql_password, mysql_database, mysql_port)
+local Player = FindMetaTable('Player')
 
-function db:onConnected()
+-- Prevent load form Fallback
+function Player:PS_PlayerSpawn() 
+
+end
+
+-- hook from addon mysql
+hook.Add('mysql_connect','pointshop_mysql',function(bdb)
+	db_obj = bdb
 	MsgN('PointShop MySQL: Connected!')
-	shouldmysql = true
-end
+	
+	
+	-- set mysql provider
+	function PROVIDER:GetData(ply, callback)
+		if not shouldmysql then self:GetFallback():GetData(ply, callback) end
+		
+		local q = db_obj:query("SELECT * FROM `pointshop_data` WHERE uniqueid = '" .. ply:UniqueID() .. "'")
+		
+		function q:onSuccess(data)
+			if #data > 0 then
+				local row = data[1]
+			 
+				local points = row.points or 0
+				local items = util.JSONToTable(row.items or '{}')
+	 
+				callback(points, items)
+			else
+				callback(0, {})
+			end
+		end
+		
+		function q:onError(err, sql)
+			if db_obj:status() ~= mysqloo.DATABASE_CONNECTED then
+				db_obj:connect()
+				db_obj:wait()
+				if db_obj:status() ~= mysqloo.DATABASE_CONNECTED then
+					ErrorNoHalt("Re-connection to database server failed.")
+					callback(0, {})
+					return
+				end
+			end
+			MsgN('PointShop MySQL: Query Failed: ' .. err .. ' (' .. sql .. ')')
+			q:start()
+		end
+		 
+		q:start()
+	end
+	 
+	function PROVIDER:SetData(ply, points, items)
+		-- Before loaded: Readonly (Protect reset point)
+		if not shouldmysql and not loaded then self:GetFallback():SetData(ply, points, items) end
+		local q = db_obj:query("INSERT INTO `pointshop_data` (uniqueid, points, items) VALUES ('" .. ply:UniqueID() .. "', '" .. (points or 0) .. "', '" .. util.TableToJSON(items or {}) .. "') ON DUPLICATE KEY UPDATE points = VALUES(points), items = VALUES(items)")
+		
+		
+		function q:onError(err, sql)
+			if db_obj:status() ~= mysqloo.DATABASE_CONNECTED then
+				db_obj:connect()
+				db_obj:wait()
+				if db_obj:status() ~= mysqloo.DATABASE_CONNECTED then
+					ErrorNoHalt("Re-connection to database server failed.")
+					return
+				end
+			end
+			MsgN('PointShop MySQL: Query Failed: ' .. err .. ' (' .. sql .. ')')
+			q:start()
+		end
+		 
+		q:start()
+	end
+	shouldmysql = true -- Load data
+	for k, v in pairs(player.GetAll()) do
+		v:PS_LoadData()
+		v:PS_SendClientsideModels()
+	end
 
-function db:onConnectionFailed(err)
-	MsgN('PointShop MySQL: Connection Failed, please check your settings: ' .. err)
-end
-
-db:connect()
+	timer.Simple(1, function()
+		function Player:PS_PlayerSpawn() -- Allow auto equip
+			if not self:PS_CanPerformAction() then return end
+		
+			-- TTT ( and others ) Fix
+			if TEAM_SPECTATOR != nil and self:Team() == TEAM_SPECTATOR then return end
+			if TEAM_SPEC != nil and self:Team() == TEAM_SPEC then return end
+		
+			timer.Simple(1, function()
+				for item_id, item in pairs(self.PS_Items) do
+					local ITEM = PS.Items[item_id]
+					if item.Equipped and self:Team() == (ITEM.Team or TEAM_HUMAN) then
+						ITEM:OnEquip(self, item.Modifiers)
+					end
+				end
+			end)
+		end
+		-- Auto equip now! (slow mysql fix)
+		for k, v in pairs(player.GetAll()) do
+			if v:Alive() then
+				v:PS_PlayerSpawn()
+			end
+		end
+	
+		-- Allow write to mysql
+		loaded = true
+	end)
+end)
 
 PROVIDER.Fallback = 'pdata'
 
 function PROVIDER:GetData(ply, callback)
-    if not shouldmysql then self:GetFallback():GetData(ply, callback) end
-     
-    local q = db:query("SELECT * FROM `pointshop_data` WHERE uniqueid = '" .. ply:UniqueID() .. "'")
-     
-    function q:onSuccess(data)
-        if #data > 0 then
-            local row = data[1]
-         
-            local points = row.points or 0
-            local items = util.JSONToTable(row.items or '{}')
- 
-            callback(points, items)
-        else
-            callback(0, {})
-        end
-    end
-     
-    function q:onError(err, sql)
-        if db:status() ~= mysqloo.DATABASE_CONNECTED then
-            db:connect()
-            db:wait()
-        if db:status() ~= mysqloo.DATABASE_CONNECTED then
-            ErrorNoHalt("Re-connection to database server failed.")
-            callback(0, {})
-            return
-            end
-        end
-        MsgN('PointShop MySQL: Query Failed: ' .. err .. ' (' .. sql .. ')')
-        q:start()
-    end
-     
-    q:start()
+	self:GetFallback():GetData(ply, callback)
 end
- 
 function PROVIDER:SetData(ply, points, items)
-    if not shouldmysql then self:GetFallback():SetData(ply, points, items) end
-    local q = db:query("INSERT INTO `pointshop_data` (uniqueid, points, items) VALUES ('" .. ply:UniqueID() .. "', '" .. (points or 0) .. "', '" .. util.TableToJSON(items or {}) .. "') ON DUPLICATE KEY UPDATE points = VALUES(points), items = VALUES(items)")
-     
-    function q:onError(err, sql)
-        if db:status() ~= mysqloo.DATABASE_CONNECTED then
-            db:connect()
-            db:wait()
-        if db:status() ~= mysqloo.DATABASE_CONNECTED then
-            ErrorNoHalt("Re-connection to database server failed.")
-            return
-            end
-        end
-        MsgN('PointShop MySQL: Query Failed: ' .. err .. ' (' .. sql .. ')')
-        q:start()
-    end
-     
-    q:start()
+	self:GetFallback():SetData(ply, points, items)
 end
