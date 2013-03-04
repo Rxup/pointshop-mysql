@@ -18,9 +18,13 @@ local db_obj = nil
 local Player = FindMetaTable('Player')
 
 -- Prevent load form Fallback
+local oldPS_PlayerSpawn = Player.PS_PlayerSpawn
 function Player:PS_PlayerSpawn() 
-
+	print('Player:PS_PlayerSpawn - block')
+	print(os.time())
 end
+
+local PS_PlayerSpawn = {}
 
 -- hook from addon mysql
 hook.Add('mysql_connect','pointshop_mysql',function(bdb)
@@ -90,34 +94,29 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 		v:PS_LoadData()
 		v:PS_SendClientsideModels()
 	end
-
-	timer.Simple(1, function()
-		function Player:PS_PlayerSpawn() -- Allow auto equip
-			if not self:PS_CanPerformAction() then return end
-		
-			-- TTT ( and others ) Fix
-			if TEAM_SPECTATOR != nil and self:Team() == TEAM_SPECTATOR then return end
-			if TEAM_SPEC != nil and self:Team() == TEAM_SPEC then return end
-		
-			timer.Simple(1, function()
-				for item_id, item in pairs(self.PS_Items) do
-					local ITEM = PS.Items[item_id]
-					if item.Equipped and self:Team() == (ITEM.Team or TEAM_HUMAN) then
-						ITEM:OnEquip(self, item.Modifiers)
-					end
-				end
-			end)
-		end
-		-- Auto equip now! (slow mysql fix)
-		for k, v in pairs(player.GetAll()) do
-			if v:Alive() then
-				v:PS_PlayerSpawn()
-			end
-		end
 	
-		-- Allow write to mysql
-		loaded = true
-	end)
+	function Player:PS_PlayerSpawn()
+		-- prevent spam (trail bug)
+		if PS_PlayerSpawn[self:UniqueID()] and PS_PlayerSpawn[self:UniqueID()] == os.time() then
+			return
+		end
+		PS_PlayerSpawn[self:UniqueID()] = os.time()
+		timer.Simple(1, function()
+			oldPS_PlayerSpawn(self)
+		end)
+	end
+	--Player.PS_PlayerSpawn = oldPS_PlayerSpawn
+	
+	-- Auto equip now! (slow mysql fix)
+	for k, v in pairs(player.GetAll()) do
+		if v:Alive() and not PS_PlayerSpawn[v:UniqueID()] then
+			v:PS_PlayerSpawn()
+		end
+	end
+
+	-- Allow write to mysql
+	loaded = true
+	
 end)
 
 PROVIDER.Fallback = 'pdata'
