@@ -49,6 +49,10 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 			else
 				callback(0, {})
 			end
+			-- Allow hook for addons
+			timer.Simple(1, function()
+				hook.Call('ps_mysql_ready',nil,ply)
+			end)
 		end
 		
 		function q:onError(err, sql)
@@ -107,16 +111,15 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 	end
 	--Player.PS_PlayerSpawn = oldPS_PlayerSpawn
 	
+	-- Allow write to mysql
+	loaded = true
+	
 	-- Auto equip now! (slow mysql fix)
 	for k, v in pairs(player.GetAll()) do
 		if v:Alive() and not PS_PlayerSpawn[v:UniqueID()] then
 			v:PS_PlayerSpawn()
 		end
 	end
-
-	-- Allow write to mysql
-	loaded = true
-	
 end)
 
 PROVIDER.Fallback = 'pdata'
