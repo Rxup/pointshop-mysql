@@ -11,7 +11,6 @@ UPDATE `pointshop_data` SET `items` = '{}' WHERE `items` = '[]';
 ]]
 
 require('mysqloo')
-local shouldmysql = false
 local loaded = false
 local db_obj = nil
 
@@ -34,8 +33,6 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 	
 	-- set mysql provider
 	function PROVIDER:GetData(ply, callback)
-		if not shouldmysql then self:GetFallback():GetData(ply, callback) end
-		
 		local q = db_obj:query("SELECT * FROM `pointshop_data` WHERE uniqueid = '" .. ply:UniqueID() .. "'")
 		
 		function q:onSuccess(data)
@@ -74,7 +71,7 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 	 
 	function PROVIDER:SetData(ply, points, items)
 		-- Before loaded: Readonly (Protect reset point)
-		if not shouldmysql and not loaded then self:GetFallback():SetData(ply, points, items) end
+		if not loaded then self:GetFallback():SetData(ply, points, items) end
 		local q = db_obj:query("INSERT INTO `pointshop_data` (uniqueid, points, items) VALUES ('" .. ply:UniqueID() .. "', '" .. (points or 0) .. "', '" .. util.TableToJSON(items or {}) .. "') ON DUPLICATE KEY UPDATE points = VALUES(points), items = VALUES(items)")
 		
 		
@@ -93,7 +90,7 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 		 
 		q:start()
 	end
-	shouldmysql = true -- Load data
+	-- Load data
 	for k, v in pairs(player.GetAll()) do
 		v:PS_LoadData()
 		v:PS_SendClientsideModels()
