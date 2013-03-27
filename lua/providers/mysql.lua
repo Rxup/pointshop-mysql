@@ -11,7 +11,7 @@ UPDATE `pointshop_data` SET `items` = '{}' WHERE `items` = '[]';
 ]]
 
 require('mysqloo')
-local loaded = false
+local loaded = {}
 local db_obj = nil
 
 local Player = FindMetaTable('Player')
@@ -19,8 +19,8 @@ local Player = FindMetaTable('Player')
 -- Prevent load form Fallback
 local oldPS_PlayerSpawn = Player.PS_PlayerSpawn
 function Player:PS_PlayerSpawn() 
-	print('Player:PS_PlayerSpawn - block')
-	print(os.time())
+--	print('Player:PS_PlayerSpawn - block')
+--	print(os.time())
 end
 
 local PS_PlayerSpawn = {}
@@ -46,6 +46,7 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 			else
 				callback(0, {})
 			end
+			loaded[ply:UserID()] = true
 			-- Allow hook for addons
 			timer.Simple(1, function()
 				hook.Call('ps_mysql_ready',nil,ply)
@@ -58,7 +59,13 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 				db_obj:wait()
 				if db_obj:status() ~= mysqloo.DATABASE_CONNECTED then
 					ErrorNoHalt("Re-connection to database server failed.")
+					
+					-- keep original data
+					if IsValid(ply) then
+						loaded[ply:UserID()] = false
+					end
 					callback(0, {})
+					
 					return
 				end
 			end
@@ -68,12 +75,11 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 		 
 		q:start()
 	end
-	 
+	
 	function PROVIDER:SetData(ply, points, items)
 		-- Before loaded: Readonly (Protect reset point)
-		if not loaded then self:GetFallback():SetData(ply, points, items) end
+		if not loaded[ply:UserID()] then return false end -- self:GetFallback():SetData(ply, points, items)  throw null - comment it
 		local q = db_obj:query("INSERT INTO `pointshop_data` (uniqueid, points, items) VALUES ('" .. ply:UniqueID() .. "', '" .. (points or 0) .. "', '" .. util.TableToJSON(items or {}) .. "') ON DUPLICATE KEY UPDATE points = VALUES(points), items = VALUES(items)")
-		
 		
 		function q:onError(err, sql)
 			if db_obj:status() ~= mysqloo.DATABASE_CONNECTED then
@@ -87,10 +93,10 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 			MsgN('PointShop MySQL: Query Failed: ' .. err .. ' (' .. sql .. ')')
 			q:start()
 		end
-		 
+		
 		q:start()
 	end
-	-- Load data
+	
 	for k, v in pairs(player.GetAll()) do
 		v:PS_LoadData()
 		v:PS_SendClientsideModels()
@@ -98,22 +104,19 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 	
 	function Player:PS_PlayerSpawn()
 		-- prevent spam (trail bug)
-		if PS_PlayerSpawn[self:UniqueID()] and PS_PlayerSpawn[self:UniqueID()] == os.time() then
+		if PS_PlayerSpawn[self:UserID()] and PS_PlayerSpawn[self:UserID()] == os.time() then
 			return
 		end
-		PS_PlayerSpawn[self:UniqueID()] = os.time()
+		PS_PlayerSpawn[self:UserID()] = os.time()
 		timer.Simple(1, function()
 			oldPS_PlayerSpawn(self)
 		end)
 	end
 	--Player.PS_PlayerSpawn = oldPS_PlayerSpawn
 	
-	-- Allow write to mysql
-	loaded = true
-	
 	-- Auto equip now! (slow mysql fix)
 	for k, v in pairs(player.GetAll()) do
-		if v:Alive() and not PS_PlayerSpawn[v:UniqueID()] then
+		if v:Alive() and not PS_PlayerSpawn[v:UserID()] then
 			v:PS_PlayerSpawn()
 		end
 	end
