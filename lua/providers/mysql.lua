@@ -79,7 +79,7 @@ hook.Add('mysql_connect','pointshop_mysql',function(bdb)
 	function PROVIDER:SetData(ply, points, items)
 		-- Before loaded: Readonly (Protect reset point)
 		if not loaded[ply:UserID()] then return false end -- self:GetFallback():SetData(ply, points, items)  throw null - comment it
-		local q = db_obj:query("INSERT INTO `pointshop_data` (uniqueid, points, items) VALUES ('" .. ply:UniqueID() .. "', '" .. (points or 0) .. "', '" .. util.TableToJSON(items or {}) .. "') ON DUPLICATE KEY UPDATE points = VALUES(points), items = VALUES(items)")
+		local q = db_obj:query("INSERT INTO `pointshop_data` (uniqueid, points, items) VALUES ('" .. ply:UniqueID() .. "', '" .. (points or 0) .. "', '" .. db_obj:escape(util.TableToJSON(items or {})) .. "') ON DUPLICATE KEY UPDATE points = VALUES(points), items = VALUES(items)")
 		
 		function q:onError(err, sql)
 			if db_obj:status() ~= mysqloo.DATABASE_CONNECTED then
